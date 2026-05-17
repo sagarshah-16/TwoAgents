@@ -1,0 +1,26 @@
+node_modules
+dist
+dist-electron
+.vite
+coverage
+*.log
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+
+# Editor / agent local settings
+.claude/
+.cursor/
+.DS_Store
+.tools/
+
+# Electron app user data (may contain chat history)
+**/two-agents/
