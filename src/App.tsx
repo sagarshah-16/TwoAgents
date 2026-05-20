@@ -7,12 +7,14 @@ import {
   CircleAlert,
   Cog,
   FileDown,
+  FileText,
   FolderOpen,
   KeyRound,
   Loader2,
   Maximize2,
   MessageSquare,
   Minimize2,
+  Paperclip,
   Plus,
   RefreshCw,
   Send,
@@ -30,6 +32,7 @@ import type {
   AgentSkill,
   AgentSkillTarget,
   AgentRunResult,
+  ChatAttachment,
   ChatMessage,
   ChatSession,
   ExecutionMode,
@@ -203,6 +206,15 @@ export function buildChatPdfHtml(
       const body = escapeHtml(message.content || "").replace(/\n/g, "<br />");
 
       let extras = "";
+      if (message.attachments?.length) {
+        const items = message.attachments
+          .map((attachment) => {
+            const label = `${attachment.name} (${formatBytes(attachment.size)})`;
+            return `<li>${escapeHtml(label)}<br /><span>${escapeHtml(attachment.path)}</span></li>`;
+          })
+          .join("");
+        extras += `<div class="files-block"><div class="files-title">Attached files</div><ul>${items}</ul></div>`;
+      }
       const result = message.result;
       if (!isUser && result) {
         const stat: string[] = [];
@@ -385,6 +397,8 @@ function App() {
   const [running, setRunning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState<string | undefined>();
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const [loginResult, setLoginResult] = useState<LoginLaunchResult | undefined>();
   const [agentLogs, setAgentLogs] = useState<AgentLogEvent[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | undefined>();
@@ -395,13 +409,17 @@ function App() {
   const agentLogsRef = useRef<AgentLogEvent[]>([]);
   agentLogsRef.current = agentLogs;
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const loginRefreshTimersRef = useRef<number[]>([]);
+  const dragDepthRef = useRef(0);
 
   const ready = statuses.length === 2 && statuses.every((status) => status.installed && status.loggedIn);
   const activeChat = chats.find((chat) => chat.id === activeChatId);
   const activeRoles = activeChat?.roles ?? roles;
   const activeWorkspacePath = activeChat?.workspacePath || defaultWorkspacePath;
-  const canSend = ready && input.trim().length > 0 && !running;
+  const canSend = ready && (input.trim().length > 0 || attachments.length > 0) && !running;
+  const canAttach = true;
   const statusMap = useMemo(() => new Map(statuses.map((status) => [status.provider, status])), [statuses]);
 
   useEffect(() => {
@@ -417,6 +435,7 @@ function App() {
     return () => {
       offLog();
       offRun?.();
+      clearLoginRefreshTimers();
     };
   }, []);
 
@@ -466,6 +485,7 @@ function App() {
     setChats((items) => [nextChat, ...items]);
     setActiveChatId(nextChat.id);
     setInput("");
+    setAttachments([]);
     setAgentLogs([]);
   }
 
@@ -489,6 +509,30 @@ function App() {
     const response = await window.twoAgents.launchLogin(provider);
     setNotice(response.message);
     setLoginResult(response);
+    scheduleLoginStatusRefreshes(provider);
+  }
+
+  function clearLoginRefreshTimers() {
+    for (const timer of loginRefreshTimersRef.current) {
+      window.clearTimeout(timer);
+    }
+    loginRefreshTimersRef.current = [];
+  }
+
+  function scheduleLoginStatusRefreshes(provider: ProviderId) {
+    clearLoginRefreshTimers();
+    const refreshDelaysMs = [1_000, 3_000, 8_000, 15_000, 30_000, 60_000, 120_000];
+    loginRefreshTimersRef.current = refreshDelaysMs.map((delay) =>
+      window.setTimeout(async () => {
+        const nextStatuses = await window.twoAgents.getProviderStatuses();
+        setStatuses(nextStatuses);
+        if (nextStatuses.find((status) => status.provider === provider)?.loggedIn) {
+          clearLoginRefreshTimers();
+          setNotice(`${providerNames[provider]} is connected.`);
+          setLoginResult(undefined);
+        }
+      }, delay)
+    );
   }
 
   async function setWorker(worker: ProviderId) {
@@ -535,9 +579,67 @@ function App() {
     });
   }
 
-  async function sendMessage(overrideContent?: string) {
+  async function chooseAttachments() {
+    if (!canAttach) {
+      return;
+    }
+    fileInputRef.current?.click();
+  }
+
+  async function attachFiles(files: FileList | File[]) {
+    const selectedFiles = Array.from(files).slice(0, 10);
+    if (!canAttach || selectedFiles.length === 0) {
+      return;
+    }
+    const selected = await Promise.all(selectedFiles.map(readFileAttachment));
+    setAttachments((current) => mergeAttachments(current, selected));
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  function handleDragEnter(event: React.DragEvent<HTMLElement>) {
+    if (!hasDraggedFiles(event) || !canAttach) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setDraggingFiles(true);
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLElement>) {
+    if (!hasDraggedFiles(event) || !canAttach) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLElement>) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setDraggingFiles(false);
+    }
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLElement>) {
+    if (!hasDraggedFiles(event) || !canAttach) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setDraggingFiles(false);
+    void attachFiles(event.dataTransfer.files);
+  }
+
+  async function sendMessage(overrideContent?: string, overrideAttachments?: ChatAttachment[]) {
     const content = (overrideContent ?? input).trim();
-    if (!ready || running || !content) {
+    const messageAttachments = overrideAttachments ?? attachments;
+    if (!ready || running || (!content && messageAttachments.length === 0)) {
       return;
     }
 
@@ -548,12 +650,16 @@ function App() {
     }
 
     const chatRoles = chat.roles ?? roles;
-    const userMessage = makeMessage("user", content);
+    const displayContent = content || "Uploaded files";
+    const userMessage = makeMessage("user", displayContent, undefined, messageAttachments);
     // If the last message in the chat is already the same user content with no reply,
     // treat this as a retry rather than appending a duplicate.
     const lastMessage = chat.messages.at(-1);
     const isRetry =
-      Boolean(lastMessage) && lastMessage?.role === "user" && lastMessage.content.trim() === content;
+      Boolean(lastMessage) &&
+      lastMessage?.role === "user" &&
+      lastMessage.content.trim() === displayContent &&
+      sameAttachments(lastMessage.attachments, messageAttachments);
     const messagesForChat = isRetry ? chat.messages : [...chat.messages, userMessage];
     const chatWithUser = normalizeChatTitle({
       ...chat,
@@ -562,6 +668,7 @@ function App() {
     });
     if (overrideContent === undefined) {
       setInput("");
+      setAttachments([]);
     }
     const startNow = Date.now();
     setRunning(true);
@@ -578,7 +685,7 @@ function App() {
     let response: AgentRunResult;
     try {
       response = await window.twoAgents.runAgents({
-        task: content,
+        task: taskWithAttachments(displayContent, messageAttachments),
         conversationMessages: isRetry ? chat.messages.slice(0, -1) : chat.messages,
         roles: chatRoles,
         skills,
@@ -642,7 +749,7 @@ function App() {
     if (!last || last.role !== "user") {
       return;
     }
-    await sendMessage(last.content);
+    await sendMessage(last.content, last.attachments ?? []);
   }
 
   async function applyPatch(diff?: string) {
@@ -767,7 +874,13 @@ function App() {
         </div>
       </aside>
 
-      <section className="chat-shell">
+      <section
+        className={`chat-shell ${draggingFiles ? "dragging-files" : ""}`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <header className="chat-topbar">
           <div className="topbar-title">
             <h1>{activeChat?.title ?? "New chat"}</h1>
@@ -872,6 +985,15 @@ function App() {
           </div>
         ) : null}
 
+        {draggingFiles ? (
+          <div className="drop-overlay" aria-hidden="true">
+            <div className="drop-target">
+              <Paperclip size={20} />
+              <span>Drop files to attach</span>
+            </div>
+          </div>
+        ) : null}
+
         <section className="messages">
           {showWelcome ? (
             <WelcomePanel ready={ready} statuses={statuses} onOpenSettings={() => setSettingsOpen(true)} />
@@ -918,6 +1040,28 @@ function App() {
 
         <footer className="composer-bar">
           <div className="composer-shell">
+            <input
+              ref={fileInputRef}
+              className="file-input"
+              type="file"
+              multiple
+              onChange={(event) => {
+                void attachFiles(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+              }}
+              tabIndex={-1}
+            />
+            {attachments.length ? (
+              <div className="attachment-tray" aria-label="Attached files">
+                {attachments.map((attachment) => (
+                  <AttachmentChip
+                    key={attachment.id}
+                    attachment={attachment}
+                    onRemove={() => removeAttachment(attachment.id)}
+                  />
+                ))}
+              </div>
+            ) : null}
             <textarea
               ref={inputRef}
               value={input}
@@ -938,7 +1082,18 @@ function App() {
               rows={1}
             />
             <div className="composer-actions">
-              <span className="composer-hint">⌘ + Return to send</span>
+              <div className="composer-left-actions">
+                <button
+                  className="icon-button-soft"
+                  onClick={() => void chooseAttachments()}
+                  disabled={!canAttach}
+                  title="Attach files"
+                  aria-label="Attach files"
+                >
+                  <Paperclip size={16} />
+                </button>
+                <span className="composer-hint">⌘ + Return to send</span>
+              </div>
               <button
                 className="primary-button"
                 onClick={() => void sendMessage()}
@@ -1744,6 +1899,7 @@ function MessageBlock({
         </div>
         <div className={`bubble ${isUser ? "user" : "assistant"}`}>
           <MessageContent content={message.content} />
+          {message.attachments?.length ? <MessageAttachments attachments={message.attachments} /> : null}
         </div>
         {!isUser && message.result ? (
           <AssistantExtras
@@ -1755,6 +1911,39 @@ function MessageBlock({
         ) : null}
       </div>
     </article>
+  );
+}
+
+function MessageAttachments({ attachments }: { attachments: ChatAttachment[] }) {
+  return (
+    <div className="message-attachments" aria-label="Attached files">
+      {attachments.map((attachment) => (
+        <div className="message-attachment" key={attachment.id} title={attachment.path}>
+          <FileText size={14} />
+          <span>{attachment.name}</span>
+          <small>{formatBytes(attachment.size)}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AttachmentChip({
+  attachment,
+  onRemove
+}: {
+  attachment: ChatAttachment;
+  onRemove: () => void;
+}) {
+  return (
+    <div className={`attachment-chip ${attachment.error ? "warn" : ""}`} title={attachment.path}>
+      <FileText size={14} />
+      <span>{attachment.name}</span>
+      <small>{attachment.error || formatBytes(attachment.size)}</small>
+      <button className="icon-button-bare" onClick={onRemove} aria-label={`Remove ${attachment.name}`}>
+        <X size={13} />
+      </button>
+    </div>
   );
 }
 
@@ -1996,14 +2185,95 @@ function splitContent(content: string): ContentPart[] {
   return parts;
 }
 
-function makeMessage(role: ChatMessage["role"], content: string, result?: AgentRunResult): ChatMessage {
+function makeMessage(
+  role: ChatMessage["role"],
+  content: string,
+  result?: AgentRunResult,
+  attachments?: ChatAttachment[]
+): ChatMessage {
   return {
     id: crypto.randomUUID(),
     role,
     content,
+    attachments: attachments?.length ? attachments : undefined,
     result,
     createdAt: new Date().toISOString()
   };
+}
+
+function mergeAttachments(current: ChatAttachment[], selected: ChatAttachment[]): ChatAttachment[] {
+  const byPath = new Map(current.map((attachment) => [attachment.path, attachment]));
+  for (const attachment of selected) {
+    byPath.set(attachment.path, attachment);
+  }
+  return [...byPath.values()].slice(0, 10);
+}
+
+async function readFileAttachment(file: File): Promise<ChatAttachment> {
+  const maxBytes = 1_000_000;
+  const bytes = new Uint8Array(await file.slice(0, maxBytes).arrayBuffer());
+  const hasBinaryBytes = bytes.includes(0);
+  const fileWithOptionalPath = file as File & { path?: string };
+  const path = fileWithOptionalPath.path || file.webkitRelativePath || file.name;
+  return {
+    id: crypto.randomUUID(),
+    name: file.name,
+    path,
+    size: file.size,
+    content: hasBinaryBytes ? undefined : new TextDecoder("utf-8").decode(bytes),
+    truncated: file.size > maxBytes,
+    error: hasBinaryBytes ? "Binary file attached by name only." : undefined
+  };
+}
+
+function hasDraggedFiles(event: React.DragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("Files");
+}
+
+function sameAttachments(a: ChatAttachment[] | undefined, b: ChatAttachment[] | undefined): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  return left.length === right.length && left.every((attachment, index) => attachment.path === right[index]?.path);
+}
+
+function taskWithAttachments(content: string, attachments: ChatAttachment[]): string {
+  if (!attachments.length) {
+    return content;
+  }
+  let remainingContentChars = 180_000;
+  const sections = attachments.map((attachment, index) => {
+    const embeddedContent = attachment.content?.slice(0, Math.max(0, remainingContentChars));
+    remainingContentChars -= embeddedContent?.length ?? 0;
+    const clippedForPrompt = Boolean(attachment.content && embeddedContent !== attachment.content);
+    const header = [
+      `Attachment ${index + 1}: ${attachment.name}`,
+      `Path: ${attachment.path}`,
+      `Size: ${formatBytes(attachment.size)}`,
+      attachment.truncated ? "Note: stored content was truncated to the first 1 MB." : undefined,
+      clippedForPrompt ? "Note: content was clipped in this prompt to fit the chat request limit." : undefined,
+      attachment.error ? `Note: ${attachment.error}` : undefined
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const body = embeddedContent
+      ? `\n\nContent:\n\`\`\`\n${embeddedContent}\n\`\`\``
+      : "\n\nContent was not embedded. Use the path above only if it is inside the selected workspace.";
+    return `${header}${body}`;
+  });
+  return `${content}\n\nAttached files:\n\n${sections.join("\n\n---\n\n")}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 function resultText(result: AgentRunResult) {

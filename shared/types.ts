@@ -109,6 +109,16 @@ export type AgentLogEvent = {
   message: string;
 };
 
+export type ChatAttachment = {
+  id: string;
+  name: string;
+  path: string;
+  size: number;
+  content?: string;
+  truncated?: boolean;
+  error?: string;
+};
+
 export type AgentSkillTarget = "worker" | "reviewer" | "both";
 
 export type AgentSkill = {
@@ -124,6 +134,7 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  attachments?: ChatAttachment[];
   result?: AgentRunResult;
 };
 

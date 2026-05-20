@@ -324,6 +324,31 @@ a {
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   min-width: 0;
   overflow: hidden;
+  position: relative;
+}
+
+.drop-overlay {
+  align-items: center;
+  background: rgba(247, 244, 237, 0.76);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  pointer-events: none;
+  position: absolute;
+  z-index: 20;
+}
+
+.drop-target {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  display: flex;
+  font-weight: 700;
+  gap: 10px;
+  padding: 16px 20px;
 }
 
 .chat-topbar {
@@ -509,6 +534,21 @@ button.role-chip-button:active {
 }
 
 .icon-button-bare:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.icon-button-soft {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  min-height: 32px;
+  padding: 0;
+  width: 34px;
+}
+
+.icon-button-soft:hover:not(:disabled) {
   background: var(--surface-3);
   color: var(--text);
 }
@@ -995,6 +1035,43 @@ button.role-chip-button:active {
   background: #143732;
   border-color: #1a4039;
   color: #ecede2;
+}
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.message-attachment {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+  max-width: 260px;
+  padding: 6px 8px;
+}
+
+.bubble.assistant .message-attachment {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.message-attachment span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment small {
+  color: inherit;
+  font-size: 11px;
+  opacity: 0.72;
+  white-space: nowrap;
 }
 
 /* ----------------------------- Assistant extras ----------------------------- */
@@ -1662,6 +1739,10 @@ button.role-chip-button:active {
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
+.file-input {
+  display: none;
+}
+
 .composer-shell:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 4px var(--accent-soft);
@@ -1684,6 +1765,52 @@ button.role-chip-button:active {
   align-items: center;
   display: flex;
   justify-content: space-between;
+}
+
+.composer-left-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+
+.attachment-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.attachment-chip {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 7px;
+  max-width: 300px;
+  min-height: 32px;
+  min-width: 0;
+  padding: 4px 5px 4px 9px;
+}
+
+.attachment-chip.warn {
+  background: var(--warn-soft);
+  border-color: #ead0aa;
+}
+
+.attachment-chip span {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip small {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .composer-hint {
